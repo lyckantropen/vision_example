@@ -1,0 +1,12 @@
+{
+  "name": "vision-example",
+  "version-string": "1.0.0",
+  "description": "A simple example of a Vision project",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "opencv",
+      "features": ["cuda", "cudnn", "contrib", "dnn-cuda"]
+    }
+  ]
+}

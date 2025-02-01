@@ -1,0 +1,12 @@
+﻿---
+BasedOnStyle: Microsoft
+AlignAfterOpenBracket: Align
+AlwaysBreakTemplateDeclarations: 'Yes'
+BreakBeforeBraces: Attach
+BreakConstructorInitializers: BeforeComma
+ColumnLimit: 160
+IndentWidth: 2
+SortIncludes: 'true'
+UseTab: Never
+
+...
