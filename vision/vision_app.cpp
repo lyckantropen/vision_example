@@ -1,8 +1,12 @@
 #include "vision_app.h"
 #include <iostream>
 #include <thread>
+#include <ranges>
 
-detections_t postprocessDetections(const std::vector<cv::Mat> &outs, cv::Mat *frame, const std::chrono::time_point<std::chrono::steady_clock> &stamp) {
+using namespace std::chrono_literals;
+
+std::vector<Detection> postprocessDetections(const std::vector<cv::Mat> &outs, cv::Mat *frame,
+                                             const std::chrono::time_point<std::chrono::steady_clock> &stamp) {
   std::vector<float> confs;
   std::vector<cv::Rect> boxes;
   std::vector<int> classIds;
@@ -33,6 +37,7 @@ detections_t postprocessDetections(const std::vector<cv::Mat> &outs, cv::Mat *fr
   }
   std::vector<int> indices;
   cv::dnn::NMSBoxes(boxes, confs, 0.5, 0.4, indices);
+  
   std::vector<Detection> detections;
   for (auto index : indices) {
     detections.push_back({boxes[index], classIds[index], confs[index], stamp});
@@ -40,9 +45,8 @@ detections_t postprocessDetections(const std::vector<cv::Mat> &outs, cv::Mat *fr
   return detections;
 }
 
-std::optional<detections_t> VisionApp::get_detections() {
-  auto now = std::chrono::high_resolution_clock::now();
-  std::optional<detections_t> detections;
+std::vector<Detection> VisionApp::filter_recent_detections(const std::vector<int>& class_ids, const std::vector<int>& max_counts, const std::vector<float>& min_confs) {
+  std::vector<Detection> detections;
   {
     std::unique_lock<std::mutex> lock(m_detect_mutex);
     auto detections_available = m_detection_done.wait_for(lock, 1us, [this] { return !m_detections_queue.empty(); });
@@ -51,18 +55,40 @@ std::optional<detections_t> VisionApp::get_detections() {
       m_detections_queue.pop_front();
     }
   }
-  return detections;
+
+  std::vector<Detection> filtered_detections;
+  std::map<int, int> m_class_counts;
+  for(auto [class_id, max_count, min_conf]: std::views::zip(class_ids, max_counts, min_confs)) {
+    m_class_counts[class_id] = 0;
+    std::copy_if(detections.begin(), detections.end(), std::back_inserter(filtered_detections), [&](const Detection& detection)  {
+      if (detection.confidence < min_conf) {
+        return false;
+      }
+      if (detection.class_id != class_id) {
+        return false;
+      }
+      if (m_class_counts[detection.class_id] < max_count) {
+        m_class_counts[detection.class_id]++;
+        return true;
+      }
+      return false;
+    });
+  }
+  
+  return filtered_detections;
 }
 
-VisionApp::VisionApp() {
+VisionApp::VisionApp(const std::string &model_cfg, const std::string &model_weights)
+    : m_model_cfg(model_cfg)
+    , m_model_weights(model_weights) {
   m_cap.open(0);
   if (!m_cap.isOpened()) {
     std::cerr << "Error: Could not open the camera!" << std::endl;
     return;
   }
+
   try {
-    // m_net = cv::dnn::readNetFromDarknet("D:/Devel/vision_example/yolov3-tiny.cfg", "D:/Devel/vision_example/yolov3-tiny.weights");
-    m_net = cv::dnn::readNetFromDarknet("D:/Devel/vision_example/yolov3.cfg", "D:/Devel/vision_example/yolov3.weights");
+    m_net = cv::dnn::readNetFromDarknet(m_model_cfg.c_str(), m_model_weights.c_str());
   } catch (cv::Exception &e) {
     std::cerr << "Error: " << e.what() << std::endl;
     return;
@@ -80,8 +106,9 @@ VisionApp::VisionApp() {
 }
 
 VisionApp::~VisionApp() {
-  if (m_cap.isOpened())
+  if (m_cap.isOpened()) {
     m_cap.release();
+  }
   cv::destroyAllWindows();
 }
 
@@ -183,13 +210,11 @@ void VisionApp::displayThread() {
     }
 
     // draw the detections, if any
-    auto detections = get_detections();
-    if (detections) {
-      for (const auto &detection : *detections) {
-        cv::rectangle(*frame, detection.box, cv::Scalar(0, 255, 0), 2);
-        cv::putText(*frame, std::to_string(detection.class_id), cv::Point(detection.box.x, detection.box.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                    cv::Scalar(0, 255, 0), 2);
-      }
+    auto detections = filter_recent_detections({0}, {1}, {0.5f}); // TODO: make this configurable
+    for (const auto &detection : detections) {
+      cv::rectangle(*frame, detection.box, cv::Scalar(0, 255, 0), 2);
+      cv::putText(*frame, std::to_string(detection.class_id), cv::Point(detection.box.x, detection.box.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                  cv::Scalar(0, 255, 0), 2);
     }
 
     // cv::flip(*frame, *frame, 1);

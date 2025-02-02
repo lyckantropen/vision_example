@@ -8,9 +8,7 @@
 #include <mutex>
 #include <opencv2/dnn/dnn.hpp>
 #include <opencv2/opencv.hpp>
-#include <optional>
-
-using namespace std::chrono_literals;
+#include <string>
 
 struct Detection {
   cv::Rect box;
@@ -19,8 +17,7 @@ struct Detection {
   std::chrono::time_point<std::chrono::steady_clock> timestamp;
 };
 
-using detections_t = std::vector<Detection>;
-detections_t postprocessDetections(const std::vector<cv::Mat> &outs, cv::Mat *frame, const std::chrono::time_point<std::chrono::steady_clock> &stamp);
+std::vector<Detection> postprocessDetections(const std::vector<cv::Mat> &outs, cv::Mat *frame, const std::chrono::time_point<std::chrono::steady_clock> &stamp);
 
 class VisionApp {
   // raw frame queue
@@ -37,11 +34,13 @@ class VisionApp {
 
   // detections queue
   std::mutex m_detect_mutex;
-  std::deque<detections_t> m_detections_queue;
+  std::deque<std::vector<Detection>> m_detections_queue;
   std::condition_variable m_detection_done;
   constexpr static size_t m_detections_size = 15;
 
   // network for inference
+  const std::string m_model_cfg;
+  const std::string m_model_weights;
   cv::dnn::Net m_net;
 
   // running flag
@@ -51,10 +50,10 @@ class VisionApp {
   std::atomic<float> m_detect_fps = 0.0f;
   std::atomic<float> m_capture_fps = 0.0f;
 
-  std::optional<detections_t> get_detections();
+  std::vector<Detection> filter_recent_detections(const std::vector<int>& class_ids, const std::vector<int>& max_counts, const std::vector<float>& min_confs);
 
 public:
-  VisionApp();
+  VisionApp(const std::string &model_cfg, const std::string &model_weights);
   virtual ~VisionApp();
 
   void detectAnnotateThread();

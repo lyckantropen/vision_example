@@ -8,11 +8,13 @@ project(Example LANGUAGES CXX CUDA)
 
 # vcpkg dependencies
 find_package(OpenCV REQUIRED)
+find_package(argparse CONFIG REQUIRED)
+find_package(Eigen3 CONFIG REQUIRED)
 
-add_library(cuda_proxy INTERFACE)
-target_compile_features(cuda_proxy INTERFACE cxx_std_20)
-target_include_directories(cuda_proxy INTERFACE ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(cuda_proxy INTERFACE ${OpenCV_LIBS})
+add_library(vision_proxy INTERFACE)
+target_compile_features(vision_proxy INTERFACE cxx_std_23)
+target_include_directories(vision_proxy INTERFACE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(vision_proxy INTERFACE ${OpenCV_LIBS} argparse::argparse Eigen3::Eigen)
 
 add_subdirectory(vision)
 
