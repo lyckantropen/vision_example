@@ -6,7 +6,10 @@
   "dependencies": [
     {
       "name": "opencv",
-      "features": ["cuda", "cudnn", "contrib", "dnn-cuda"]
+      "features": ["cuda", "cudnn", "contrib", "dnn-cuda", "eigen"]
+    },
+    {
+      "name": "argparse"
     }
   ]
 }

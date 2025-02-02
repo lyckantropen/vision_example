@@ -42,6 +42,7 @@
 CMakeFiles/
 CMakeCache.txt
 build*
+compile_commands.json
 
 # cache
 .cache/
