@@ -1,7 +1,7 @@
 #include "vision_app.h"
 #include <iostream>
-#include <thread>
 #include <ranges>
+#include <thread>
 
 using namespace std::chrono_literals;
 
@@ -37,15 +37,16 @@ std::vector<Detection> postprocessDetections(const std::vector<cv::Mat> &outs, c
   }
   std::vector<int> indices;
   cv::dnn::NMSBoxes(boxes, confs, 0.5, 0.4, indices);
-  
+
   std::vector<Detection> detections;
   for (auto index : indices) {
-    detections.push_back({boxes[index], classIds[index], confs[index], stamp});
+    detections.emplace_back(boxes[index], classIds[index], confs[index], stamp);
   }
   return detections;
 }
 
-std::vector<Detection> VisionApp::filter_recent_detections(const std::vector<int>& class_ids, const std::vector<int>& max_counts, const std::vector<float>& min_confs) {
+std::vector<Detection> VisionApp::filter_recent_detections(const std::vector<int> &class_ids, const std::vector<int> &max_counts,
+                                                           const std::vector<float> &min_confs) {
   std::vector<Detection> detections;
   {
     std::unique_lock<std::mutex> lock(m_detect_mutex);
@@ -58,9 +59,9 @@ std::vector<Detection> VisionApp::filter_recent_detections(const std::vector<int
 
   std::vector<Detection> filtered_detections;
   std::map<int, int> m_class_counts;
-  for(auto [class_id, max_count, min_conf]: std::views::zip(class_ids, max_counts, min_confs)) {
+  for (auto [class_id, max_count, min_conf] : std::views::zip(class_ids, max_counts, min_confs)) {
     m_class_counts[class_id] = 0;
-    std::copy_if(detections.begin(), detections.end(), std::back_inserter(filtered_detections), [&](const Detection& detection)  {
+    std::copy_if(detections.begin(), detections.end(), std::back_inserter(filtered_detections), [&](const Detection &detection) {
       if (detection.confidence < min_conf) {
         return false;
       }
@@ -74,7 +75,7 @@ std::vector<Detection> VisionApp::filter_recent_detections(const std::vector<int
       return false;
     });
   }
-  
+
   return filtered_detections;
 }
 
@@ -96,13 +97,21 @@ VisionApp::VisionApp(const std::string &model_cfg, const std::string &model_weig
   m_net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
   m_net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA_FP16);
 
-  std::thread cap_thread(&VisionApp::captureThread, this);
-  std::thread detect_thread(&VisionApp::detectAnnotateThread, this);
-  std::thread display_thread(&VisionApp::displayThread, this);
+  m_cap_thread = std::make_unique<std::thread>(&VisionApp::captureThread, this);
+  m_detect_thread = std::make_unique<std::thread>(&VisionApp::detectAnnotateThread, this);
+  m_display_thread = std::make_unique<std::thread>(&VisionApp::displayThread, this);
+}
 
-  cap_thread.join();
-  detect_thread.join();
-  display_thread.join();
+void VisionApp::wait() {
+  if (m_cap_thread->joinable()) {
+    m_cap_thread->join();
+  }
+  if (m_detect_thread->joinable()) {
+    m_detect_thread->join();
+  }
+  if (m_display_thread->joinable()) {
+    m_display_thread->join();
+  }
 }
 
 VisionApp::~VisionApp() {
@@ -115,7 +124,7 @@ VisionApp::~VisionApp() {
 void VisionApp::detectAnnotateThread() {
   try {
     while (m_running) {
-      auto detect_begin = std::chrono::high_resolution_clock::now();
+      auto detect_begin = std::chrono::steady_clock::now();
       std::unique_ptr<cv::Mat> frame;
       {
         std::unique_lock<std::mutex> lock(m_raw_mutex_peek);
@@ -147,7 +156,7 @@ void VisionApp::detectAnnotateThread() {
       }
       m_detection_done.notify_one();
 
-      auto detect_end = std::chrono::high_resolution_clock::now();
+      auto detect_end = std::chrono::steady_clock::now();
       auto detect_fps = 1.0f / std::chrono::duration_cast<std::chrono::milliseconds>(detect_end - detect_begin).count() * 1000.0f;
       auto this_duration = std::chrono::duration_cast<std::chrono::milliseconds>(detect_end - detect_begin);
       m_detect_fps = detect_fps;
@@ -163,7 +172,7 @@ void VisionApp::detectAnnotateThread() {
 
 void VisionApp::captureThread() {
   while (m_running) {
-    auto cap_begin = std::chrono::high_resolution_clock::now();
+    auto cap_begin = std::chrono::steady_clock::now();
 
     // perform capture
     auto frame = std::make_unique<cv::Mat>();
@@ -190,7 +199,7 @@ void VisionApp::captureThread() {
     m_raw_frame_available.notify_all();
     m_raw_frame_available_peek.notify_all();
 
-    auto cap_end = std::chrono::high_resolution_clock::now();
+    auto cap_end = std::chrono::steady_clock::now();
     auto this_duration = std::chrono::duration_cast<std::chrono::milliseconds>(cap_end - cap_begin);
     auto cap_fps = 1.0f / this_duration.count() * 1000.0f;
     m_capture_fps = cap_fps;
@@ -199,7 +208,7 @@ void VisionApp::captureThread() {
 
 void VisionApp::displayThread() {
   while (true) {
-    auto display_begin = std::chrono::high_resolution_clock::now();
+    auto display_begin = std::chrono::steady_clock::now();
     // pull the frame off the queue
     std::unique_ptr<cv::Mat> frame;
     {
@@ -210,11 +219,13 @@ void VisionApp::displayThread() {
     }
 
     // draw the detections, if any
-    auto detections = filter_recent_detections({0}, {1}, {0.5f}); // TODO: make this configurable
-    for (const auto &detection : detections) {
-      cv::rectangle(*frame, detection.box, cv::Scalar(0, 255, 0), 2);
-      cv::putText(*frame, std::to_string(detection.class_id), cv::Point(detection.box.x, detection.box.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                  cv::Scalar(0, 255, 0), 2);
+    if (m_object_source) {
+      auto detections = (*m_object_source)();
+      for (const auto &detection : detections) {
+        cv::rectangle(*frame, detection.box, cv::Scalar(0, 255, 0), 2);
+        cv::putText(*frame, std::to_string(detection.class_id), cv::Point(detection.box.x, detection.box.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                    cv::Scalar(0, 255, 0), 2);
+      }
     }
 
     // cv::flip(*frame, *frame, 1);
@@ -225,7 +236,7 @@ void VisionApp::displayThread() {
     // draw the frame
     cv::imshow("Webcam Feed", *frame);
 
-    if (cv::waitKey(1) == 27) {
+    if (cv::waitKey(1) == 27 || cv::getWindowProperty("Webcam Feed", cv::WND_PROP_VISIBLE) < 1) {
       m_running = false;
       break;
     }

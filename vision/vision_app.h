@@ -8,14 +8,11 @@
 #include <mutex>
 #include <opencv2/dnn/dnn.hpp>
 #include <opencv2/opencv.hpp>
+#include <optional>
 #include <string>
 
-struct Detection {
-  cv::Rect box;
-  int class_id;
-  float confidence;
-  std::chrono::time_point<std::chrono::steady_clock> timestamp;
-};
+
+#include "detection.h"
 
 std::vector<Detection> postprocessDetections(const std::vector<cv::Mat> &outs, cv::Mat *frame, const std::chrono::time_point<std::chrono::steady_clock> &stamp);
 
@@ -44,19 +41,27 @@ class VisionApp {
   cv::dnn::Net m_net;
 
   // running flag
-  std::atomic_bool m_running = true;
+  std::atomic_bool m_running = {true};
 
   // stats
-  std::atomic<float> m_detect_fps = 0.0f;
-  std::atomic<float> m_capture_fps = 0.0f;
+  std::atomic<float> m_detect_fps = {0.0f};
+  std::atomic<float> m_capture_fps = {0.0f};
 
-  std::vector<Detection> filter_recent_detections(const std::vector<int>& class_ids, const std::vector<int>& max_counts, const std::vector<float>& min_confs);
+  // threads
+  std::unique_ptr<std::thread> m_detect_thread;
+  std::unique_ptr<std::thread> m_cap_thread;
+  std::unique_ptr<std::thread> m_display_thread;
 
 public:
   VisionApp(const std::string &model_cfg, const std::string &model_weights);
   virtual ~VisionApp();
 
+  std::vector<Detection> filter_recent_detections(const std::vector<int> &class_ids, const std::vector<int> &max_counts, const std::vector<float> &min_confs);
   void detectAnnotateThread();
   void captureThread();
   void displayThread();
+  void wait();
+
+  // object source callback
+  std::optional<std::function<std::vector<Detection>()>> m_object_source;
 };
